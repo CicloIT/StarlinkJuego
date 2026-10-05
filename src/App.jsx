@@ -1,8 +1,9 @@
 import { useState, useRef, useEffect, useLayoutEffect, useCallback } from 'react'
+import { RotateCcw } from 'lucide-react'
 
-const SATELLITE_DURATION = 12000
+const SATELLITE_DURATION = 2500
 const SATELLITE_WIDTH = 100
-const ANTENNA_WIDTH = 120
+const ANTENNA_WIDTH = Math.round(Math.min(window.innerWidth * 0.28, 220))
 
 const THRESHOLDS = { great: 80, weak: 180, bad: 320 }
 
@@ -15,22 +16,21 @@ function getSatPos(t, W, H) {
 }
 
 function getSignalResult(distance) {
-  if (distance <= THRESHOLDS.great) return { label: '✅ Buena señal', color: 'text-green-400', border: 'border-green-400', glow: true }
-  if (distance <= THRESHOLDS.weak) return { label: '🟡 Señal débil', color: 'text-yellow-400', border: 'border-yellow-400', glow: false }
-  if (distance <= THRESHOLDS.bad) return { label: '🟠 Mala señal', color: 'text-orange-400', border: 'border-orange-400', glow: false }
-  return { label: '❌ Sin señal', color: 'text-red-500', border: 'border-red-500', glow: false }
+  if (distance <= THRESHOLDS.great) return { label: '¡Starlink conectado!', sub: 'Señal perfecta', color: 'text-green-400', border: 'border-green-400', glow: true }
+  if (distance <= THRESHOLDS.weak) return { label: 'Starlink conectado', sub: 'Señal débil — internet lento', color: 'text-yellow-400', border: 'border-yellow-400', glow: false }
+  if (distance <= THRESHOLDS.bad) return { label: 'Conexión fallida', sub: 'Señal muy mala', color: 'text-orange-400', border: 'border-orange-400', glow: false }
+  return { label: 'Sin cobertura', sub: 'El satélite pasó lejos', color: 'text-red-500', border: 'border-red-500', glow: false }
 }
 
 function SignalCone({ apexX, apexY }) {
-  // extend lines beyond top of screen so cone looks open-ended
   const topY = 0
   const scale = (apexY - topY) / apexY
   const half = THRESHOLDS.bad * scale
   const points = `${apexX},${apexY} ${apexX - half},${topY} ${apexX + half},${topY}`
 
   return (
-    <svg className="absolute inset-0 w-full h-full pointer-events-none" xmlns="http://www.w3.org/2000/svg">
-      <polygon points={points} fill="rgba(125,211,252,0.10)" stroke="rgba(125,211,252,0.55)" strokeWidth="1.5" />
+    <svg className="absolute inset-0 w-full h-full pointer-events-none">
+      <polygon points={points} fill="rgba(125,211,252,0.08)" stroke="rgba(125,211,252,0.4)" strokeWidth="1.5" />
     </svg>
   )
 }
@@ -87,50 +87,42 @@ function StartScreen({ onStart }) {
 export default function App() {
   const [gameStarted, setGameStarted] = useState(false)
   const [satPos, setSatPos] = useState({ x: -SATELLITE_WIDTH, y: 0 })
-  const [dims, setDims] = useState({ W: window.innerWidth, H: window.innerHeight })
   const [apex, setApex] = useState({ x: window.innerWidth / 2, y: window.innerHeight })
   const [laser, setLaser] = useState(null)
   const [result, setResult] = useState(null)
   const [fired, setFired] = useState(false)
 
   const satPosRef = useRef(satPos)
+  const firedRef = useRef(false)
   const antennaRef = useRef(null)
-  const laserIdRef = useRef(0)
   const startTimeRef = useRef(null)
-  const rafRef = useRef(null)
 
   const measureApex = useCallback(() => {
     if (!antennaRef.current) return
     const rect = antennaRef.current.getBoundingClientRect()
-    setApex({ x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.4 })
+    setApex({ x: rect.left + rect.width / 2, y: rect.top + rect.height * 0.42 })
   }, [])
+
+  useEffect(() => { firedRef.current = fired }, [fired])
 
   useLayoutEffect(() => { measureApex() }, [measureApex])
 
   useEffect(() => {
-    const onResize = () => {
-      setDims({ W: window.innerWidth, H: window.innerHeight })
-      measureApex()
-    }
-    window.addEventListener('resize', onResize)
-    return () => window.removeEventListener('resize', onResize)
-  }, [measureApex])
-
-  useEffect(() => {
     const animate = (ts) => {
-      if (!startTimeRef.current) startTimeRef.current = ts
-      const t = ((ts - startTimeRef.current) % SATELLITE_DURATION) / SATELLITE_DURATION
-      const pos = getSatPos(t, window.innerWidth, window.innerHeight)
-      satPosRef.current = pos
-      setSatPos(pos)
-      rafRef.current = requestAnimationFrame(animate)
+      if (!firedRef.current) {
+        if (!startTimeRef.current) startTimeRef.current = ts
+        const t = ((ts - startTimeRef.current) % SATELLITE_DURATION) / SATELLITE_DURATION
+        const pos = getSatPos(t, window.innerWidth, window.innerHeight)
+        satPosRef.current = pos
+        setSatPos(pos)
+      }
+      requestAnimationFrame(animate)
     }
-    rafRef.current = requestAnimationFrame(animate)
-    return () => cancelAnimationFrame(rafRef.current)
+    requestAnimationFrame(animate)
   }, [])
 
   const handleClick = useCallback(() => {
-    if (fired || !antennaRef.current) return
+    if (fired) return
 
     const antRect = antennaRef.current.getBoundingClientRect()
     const antCenterX = antRect.left + antRect.width / 2
@@ -138,10 +130,9 @@ export default function App() {
 
     const distance = Math.abs(satCenterX - antCenterX)
     const signal = getSignalResult(distance)
-    const id = laserIdRef.current++
 
     setFired(true)
-    setLaser({ id, x: antCenterX })
+    setLaser({ x: antCenterX })
     setResult(signal)
 
     setTimeout(() => setLaser(null), 700)
@@ -151,25 +142,21 @@ export default function App() {
     setFired(false)
     setResult(null)
     setLaser(null)
+    startTimeRef.current = null
   }, [])
 
   if (!gameStarted) return <StartScreen onStart={() => setGameStarted(true)} />
 
   return (
     <div
-      className="relative w-screen h-screen overflow-hidden select-none"
+      className="relative w-screen h-screen overflow-hidden"
       onClick={!fired ? handleClick : undefined}
-      style={{
-        backgroundImage: 'url(/Fondo.png)',
-        backgroundSize: 'cover',
-        backgroundPosition: 'center',
-        cursor: fired ? 'default' : 'crosshair',
-      }}
+      style={{ backgroundImage: 'url(/Fondo.png)', backgroundSize: 'cover' }}
     >
-      {/* Detection cone */}
+
       <SignalCone apexX={apex.x} apexY={apex.y} />
 
-      {/* Satellite */}
+      {/* Satélite */}
       <div
         className="absolute"
         style={{ left: satPos.x, top: satPos.y, width: SATELLITE_WIDTH }}
@@ -186,46 +173,48 @@ export default function App() {
       {/* Laser */}
       {laser && (
         <div
-          className="laser-animate absolute w-1 bg-gradient-to-t from-cyan-400 to-transparent rounded-full"
-          style={{ left: laser.x - 2, bottom: 120 }}
+          className="absolute w-1 bg-gradient-to-t from-cyan-400 to-transparent rounded-full animate-pulse"
+          style={{ left: laser.x - 2, bottom: 120, height: '60vh' }}
         />
       )}
 
-      {/* Result overlay */}
+      {/* Resultado */}
       {result && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center gap-6 pointer-events-none">
-          <div
-            className={`
-              text-3xl font-bold px-8 py-4 rounded-xl shadow-lg border-2
-              ${result.color} ${result.border}
-              bg-black/70 backdrop-blur-sm
-              ${result.glow ? 'glow-green' : ''}
-            `}
-          >
-            {result.label}
+        <div className="absolute top-5 left-1/2 -translate-x-1/2 text-center">
+          <div className={`px-8 py-4 rounded-2xl border-2 backdrop-blur-md ${result.color} ${result.border} bg-black/70`}>
+            <h2 className="text-2xl font-bold">{result.label}</h2>
+            <p className="text-sm opacity-70">{result.sub}</p>
           </div>
-          <button
-            className="pointer-events-auto px-6 py-3 rounded-lg bg-white/10 border border-white/30 text-white font-bold text-lg hover:bg-white/20 transition-colors backdrop-blur-sm"
-            onClick={(e) => { e.stopPropagation(); handleRestart() }}
-          >
-            Reiniciar
-          </button>
         </div>
       )}
 
-      {/* Antenna */}
-      <div
-        ref={antennaRef}
-        className="absolute bottom-0 left-1/2 -translate-x-1/2"
-        style={{ width: ANTENNA_WIDTH }}
-      >
-        <img src="/Starlink_estandar.png" alt="antena" width={ANTENNA_WIDTH} draggable={false} onLoad={measureApex} />
+      {/* Antena */}
+      <div ref={antennaRef} className="absolute bottom-0 left-1/2 -translate-x-1/2">
+        <img src="/Starlink_estandar.png" width={ANTENNA_WIDTH} onLoad={measureApex} />
       </div>
 
-      {/* Hint */}
+      {/* Botón reset — solo aparece después del disparo */}
+      {fired && (
+        <div className="absolute left-1/2 -translate-x-1/2 z-20"
+            style={{ bottom: 30 }}
+        >
+          <button
+            onClick={(e) => { e.stopPropagation(); handleRestart() }}
+            className="p-3 rounded-full 
+      bg-black/50 backdrop-blur-md 
+      border border-cyan-400/40 
+      hover:border-cyan-300 
+      hover:shadow-[0_0_15px_rgba(34,211,238,0.7)] 
+      hover:rotate-180 
+      transition-all duration-300"
+          >
+            <RotateCcw className="w-5 h-5 text-cyan-300" />
+          </button>
+        </div>
+      )}
       {!fired && (
-        <p className="absolute bottom-4 w-full text-center text-white/50 text-sm pointer-events-none">
-          Hacé click para disparar
+        <p className="absolute bottom-4 w-full text-center text-white/50">
+          Click para disparar
         </p>
       )}
     </div>
